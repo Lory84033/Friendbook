@@ -1,0 +1,74 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+    function keys(k) { return request.resource.data.keys().hasOnly(k); }
+
+    match /nicknames/{n} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && n.matches('^[a-z0-9]{3,16}$')
+        && keys(['u']) && request.resource.data.u == request.auth.uid;
+    }
+
+    match /users/{uid} {
+      allow read: if request.auth != null && (request.auth.uid == uid ||
+        (exists(/databases/$(db)/documents/users/$(uid)/f/$(request.auth.uid))
+         && get(/databases/$(db)/documents/users/$(uid)/f/$(request.auth.uid)).data.s == 'a'
+         && !exists(/databases/$(db)/documents/users/$(uid)/bl/$(request.auth.uid))));
+      allow create: if request.auth != null && request.auth.uid == uid
+        && keys(['n','c','s','st'])
+        && request.resource.data.n is string && request.resource.data.n.matches('^[a-z0-9]{3,16}$')
+        && get(/databases/$(db)/documents/nicknames/$(request.resource.data.n)).data.u == uid
+        && request.resource.data.s == '' && request.resource.data.st == 0;
+      allow update: if request.auth != null && request.auth.uid == uid
+        && keys(['n','c','s','st'])
+        && request.resource.data.n == resource.data.n
+        && request.resource.data.c == resource.data.c
+        && request.resource.data.s is string && request.resource.data.s.size() <= 140
+        && request.resource.data.st is int;
+
+      match /f/{fid} {
+        allow read: if request.auth != null && request.auth.uid == uid;
+        allow create: if request.auth != null && uid != fid
+          && keys(['n','s','t'])
+          && request.resource.data.n is string && request.resource.data.n.size() <= 16
+          && request.resource.data.t is int
+          && !exists(/databases/$(db)/documents/users/$(uid)/bl/$(fid))
+          && !exists(/databases/$(db)/documents/users/$(fid)/bl/$(uid))
+          && ((request.auth.uid == uid && request.resource.data.s == 'o')
+           || (request.auth.uid == fid && request.resource.data.s == 'i'));
+        allow update: if request.auth != null
+          && request.resource.data.s == 'a'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['s'])
+          && ((request.auth.uid == uid && resource.data.s == 'i')
+           || (request.auth.uid == fid && resource.data.s == 'o'));
+        allow delete: if request.auth != null && (request.auth.uid == uid || request.auth.uid == fid);
+      }
+
+      match /bl/{bid} {
+        allow read, delete: if request.auth != null && request.auth.uid == uid;
+        allow create: if request.auth != null && request.auth.uid == uid && uid != bid
+          && keys(['n','t']) && request.resource.data.n is string
+          && request.resource.data.n.size() <= 16 && request.resource.data.t is int;
+      }
+    }
+
+    match /chats/{cid}/m/{mid} {
+      function ids() { return cid.split('_'); }
+      function other() { return ids()[0] == request.auth.uid ? ids()[1] : ids()[0]; }
+      allow read: if request.auth != null && request.auth.uid in ids();
+      allow create: if request.auth != null
+        && ids().size() == 2 && ids()[0] != ids()[1] && request.auth.uid in ids()
+        && keys(['u','n','x','t'])
+        && request.resource.data.u == request.auth.uid
+        && request.resource.data.n is string && request.resource.data.n.size() <= 16
+        && request.resource.data.x is string
+        && request.resource.data.x.size() > 0 && request.resource.data.x.size() <= 200
+        && request.resource.data.t is int
+        && request.resource.data.t > request.time.toMillis() - 600000
+        && request.resource.data.t < request.time.toMillis() + 600000
+        && get(/databases/$(db)/documents/users/$(request.auth.uid)/f/$(other())).data.s == 'a'
+        && !exists(/databases/$(db)/documents/users/$(other())/bl/$(request.auth.uid))
+        && !exists(/databases/$(db)/documents/users/$(request.auth.uid)/bl/$(other()));
+    }
+  }
+}
